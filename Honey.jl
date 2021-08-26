@@ -27,7 +27,7 @@ function makedata(n=60::Int, # Students
     # School preferences
 
     # n×m matrix of additive utilities
-    V = repeat(randn(m)', n) + rand(Gumbel(), n, m)
+    V = repeat(randn(n)', m)' + rand(Gumbel(), n, m)
     
     # n×n×m tensor, where W[:, :, c] is school c's matrix
     # of complementarity/substitutability effects

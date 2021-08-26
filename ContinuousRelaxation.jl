@@ -32,7 +32,7 @@ function makedata(n=6::Int, # Number of student profiles
     # School preferences
 
     # n×m matrix of school additive utilities
-    V = repeat(randn(m)', n) + rand(Gumbel(), n, m)
+    V = repeat(randn(n)', m)' + rand(Gumbel(), n, m)
     
     # n×n×m tensor, where W[:, :, c] is school c's matrix
     # of complementarity/substitutability effects
@@ -40,10 +40,10 @@ function makedata(n=6::Int, # Number of student profiles
 
     # Soft capacity constraint: School pays additional
     # fixed cost if demand exceeds
-    q = rand(m)
+    q = 2 * rand(m) / n
 
     # Size of fixed cost
-    r = randexp(m) * n / m
+    r = randexp(m)
 
     return (;Y, p, V, W, q, r)
 end
@@ -53,7 +53,7 @@ end
     assignment(E, X)
 
 Compute the assignment of students in economy `E` to schools, where `X`
-is a matrix of admissions decisions. 
+is a matrix of admissions decisions.
 """
 function assignment(E::Economy, X::Matrix{Float64})::Matrix{Float64}
     (n, m) = size(E.Y)
@@ -108,9 +108,9 @@ function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
     res_μ = zeros(Float64, n)
 
     for c in 1:m
-        # @show c
+        println("  c = $c")
         model = Model(Ipopt.Optimizer)
-        # set_silent(model)
+        set_silent(model)
 
         # Demand vector
         @variable model (0 ≤ μ_c[1:n])
@@ -130,14 +130,16 @@ function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
         # If the optimum here exceeded the capacity, try again
         # with a capacity constraint and see if it does better
         # The same can be accomplished with a binary variable
-        if false && sum(value.(μ_c)) > E.q[c]
-            # println("  Opt exceeded capacity")
+        if E.p' * value.(μ_c) > E.q[c]
+            println("    Opt exceeded capacity")
             res_μ[:], stash_obj = value.(μ_c), getobjectivevalue(model) - E.r[c]
-            @constraint model (sum(μ_c) ≤ E.q[c])
+            @constraint model (E.p' * value.(μ_c) ≤ E.q[c])
             optimize!(model)
             if getobjectivevalue(model) > stash_obj
-                # println("  Found a better soln")
+                println("    Found a better soln")
                 res_μ[:] = value.(μ_c)
+            else
+                println("    But it was still optimal")
             end
         else 
             res_μ[:] = value.(μ_c)
@@ -148,14 +150,9 @@ function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
             # number of students to number of students
             # willing to attend.
             if freedemand[s, c] > eps()
-                X_BR[s, c] = res_μ[s] / freedemand[s, c]
+                X_BR[s, c] = min(1, res_μ[s] / freedemand[s, c])
             else
                 X_BR[s, c] = 0.5
-            end
-            if X_BR[s, c] > 1
-                println("right here baby")
-                @show res_μ[s]
-                @show freedemand[s, c]
             end
         end
     end
@@ -169,19 +166,14 @@ end
     experiment(T, n, m)
 
 Conduct an experiment to see if the best-response dynamics converge.
-Returns the random economy `E`, the `gap` or number of students whose
-assignments switched between iterations, and the demand vector `D` for
-each school at each iteration.
+Returns the random economy `E`, the admissions policy `X`, the `gap` or
+number of students whose assignments switched between iterations,
+and the demand vector `D` for each school at each iteration.
 """
-function experiment(T=1::Int, n=20::Int, m=10::Int)
+function experiment(T=15::Int, n=60::Int, m=10::Int)
     E = makedata(n, m)
 
-    # Can also use rand or zeros, but ones
-    # tends to yield faster convergence, perhaps
-    # because it means schools only have to consider
-    # rejections rather than combinations of rejections
-    # and new admissions.
-    X = rand(Float64, size(E.Y))
+    X = ones(Float64, size(E.Y))
     X_BR = copy(X)
 
     gap = Float64[]
@@ -191,9 +183,10 @@ function experiment(T=1::Int, n=20::Int, m=10::Int)
         @show t
         @show extrema(X_BR)
         X_BR[:] = bestresponse(E, X)
-        push!(gap, sum(abs.(X_BR - X)))
+        # Scale this norm by E.p 
+        push!(gap, sum(abs.((X_BR - X)' * E.p)))
         println("BR gap: ", gap[end])
-        push!(D, reshape(sum(assignment(E, X_BR), dims=1), :))
+        push!(D, assignment(E, X_BR)' * E.p)
         X[:] = X_BR
     end
 
@@ -220,20 +213,3 @@ pl, pr = plots()
 
 # savefig(pl, "./continuousplots/convergence.pdf")
 # savefig(pr, "./continuousplots/demand.pdf")
-
-
-
-function freedemandcalc(E, X)
-    (n, m) = size(E.Y)
-
-    omX = 1 .- X
-
-    idx = zeros(Bool, m)
-    freedemand = zeros(Float64, n, m)
-    for s in 1:n, c in 1:m
-        idx[:] = E.Y[s, :] .> E.Y[s, c]
-        freedemand[s, c] = prod(omX[s, idx])
-    end
-
-    return freedemand
-end
