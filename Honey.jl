@@ -35,7 +35,7 @@ function makedata(n=60::Int, # Students
 
     # Soft capacity constraint: School pays additional
     # fixed cost if demand exceeds
-    q = rand(n÷m .+ (-5:5), m)
+    q = rand((n÷(2*m)):(2*n÷m), m)
 
     # Size of fixed cost
     r = randexp(m) * n / m
@@ -85,14 +85,14 @@ function bestresponse(E::Economy, X::Matrix{Bool})::Matrix{Bool}
         @variable model μ_c[1:n] Bin
 
         # Complementarity indicator
-        @variable model z[i in 1:n, j in 1:i-1]
+        @variable model z[i in 1:n, j in 1:i-1] ≥ 0
 
         # Complementarity constraint
+        # z[i, j] = μ_c[i] && μ_c[j]
         for i in 1:n, j in 1:i-1
-            @constraint model (z[i, j] ≥ μ_c[i] - μ_c[j])
-            @constraint model (z[i, j] ≥ - μ_c[i] + μ_c[j])
-            @constraint model (z[i, j] ≤ μ_c[i] + μ_c[j])
-            @constraint model (z[i, j] ≤ 2 - μ_c[i] - μ_c[j])
+            @constraint model (z[i, j] ≤ μ_c[i])
+            @constraint model (z[i, j] ≤ μ_c[j])
+            @constraint model (z[i, j] ≥ μ_c[i] + μ_c[j] - 1)
         end
 
         # Exceeded capacity
@@ -141,9 +141,16 @@ Returns the random economy `E`, the `gap` or number of students whose
 assignments switched between iterations, and the demand vector `D` for
 each school at each iteration.
 """
-function experiment(T=5::Int, n=80::Int, m=8::Int)
+function experiment(T=15::Int, n=150::Int, m=10::Int)
     E = makedata(n, m)
-    X = rand(Bool, size(E.Y))
+
+    # Can also use rand or zeros, but ones
+    # tends to yield faster convergence, perhaps
+    # because it means schools only have to consider
+    # rejections rather than combinations of rejections
+    # and new admissions.
+    X = ones(Bool, size(E.Y))
+
     X_BR = copy(X)
     gap = Int[]
     D = Vector{Int}[]
@@ -161,14 +168,14 @@ function experiment(T=5::Int, n=80::Int, m=8::Int)
 end
 
 
-E, gap, D = experiment()
+@time E, gap, D = experiment()
 
 
 function plots()
-    pl = plot(gap, xlabel="iteration", label="number of students whose assignment changed")
+    pl = plot(gap, xlabel="iteration", label="number of changed admissions decisions")
 
     colors = theme_palette(:auto)
-    pr = plot(reduce(hcat, D)', c = [colors[i] for i in 1:length(E.q)]', xlabel="iteration", ylabel="demand", legend=false)
+    pr = plot(reduce(hcat, D)', c = [colors[i] for i in 1:length(E.q)]', lw=2, xlabel="iteration", ylabel="demand", legend=false)
     for (i, q) in enumerate(E.q)
         hline!(pr, [q], c = colors[i], ls=:dash)
     end
@@ -178,5 +185,5 @@ end
 
 pl, pr = plots()
 
-savefig(pl, "convergence.pdf")
-savefig(pr, "demand.pdf")
+# savefig(pl, "./discreteplots/convergence.pdf")
+# savefig(pr, "./discreteplots/demand.pdf")
