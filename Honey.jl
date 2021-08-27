@@ -31,7 +31,7 @@ function makedata(n=60::Int, # Students
     
     # n×n×m tensor, where W[:, :, c] is school c's matrix
     # of complementarity/substitutability effects
-    W = 0.1 * randn(n, n, m)
+    W = 10 * randn(n, n, m)
 
     # Soft capacity constraint: School pays additional
     # fixed cost if demand exceeds
@@ -79,6 +79,7 @@ function bestresponse(E::Economy, X::Matrix{Bool})::Matrix{Bool}
 
     for c in 1:m
         model = Model(Cbc.Optimizer)
+        set_optimizer_attribute(model, "threads", Threads.nthreads()) 
         set_silent(model)
 
         # Demand vector
@@ -141,7 +142,7 @@ Returns the random economy `E`, the `gap` or number of students whose
 assignments switched between iterations, and the demand vector `D` for
 each school at each iteration.
 """
-function experiment(T=15::Int, n=150::Int, m=10::Int)
+function experiment(T=15::Int, n=5::Int, m=2::Int)
     E = makedata(n, m)
 
     # Can also use rand or zeros, but ones
@@ -150,40 +151,62 @@ function experiment(T=15::Int, n=150::Int, m=10::Int)
     # rejections rather than combinations of rejections
     # and new admissions.
     X = ones(Bool, size(E.Y))
-
     X_BR = copy(X)
-    gap = Int[]
-    D = Vector{Int}[]
+
+    μ = assignment(E, X)
+    μ_BR = copy(μ)
+
+    X_gap = Int[]
+    μ_gap = Int[]
+
+    D = Vector{Int}[vec(sum(μ, dims=1))]
 
     for t in 1:T
         @show t
+
         X_BR[:] = bestresponse(E, X)
-        push!(gap, sum(abs.(X_BR - X)))
-        println("BR gap: ", gap[end])
-        push!(D, reshape(sum(assignment(E, X_BR), dims=1), :))
+        μ_BR[:] = assignment(E, X_BR)
+
+        # Scale this norm by E.p
+        push!(X_gap, sum(abs.(X_BR - X)))
+        push!(μ_gap, sum(abs.(μ_BR - μ)))
+
+        push!(D, vec(sum(μ_BR, dims=1)))
         X[:] = X_BR
+        μ[:] = μ_BR
     end
 
-    return E, gap, D
+    return (;E, X, μ, X_gap, μ_gap, D)
 end
 
 
-@time E, gap, D = experiment()
+
+# @time res = experiment()
 
 
-function plots()
-    pl = plot(gap, xlabel="iteration", label="number of changed admissions decisions")
+function plots(res)
+    pl = plot(xlabel="iteration", legend=:topright)
+    plot!(pl, res.X_gap, label="number of changed admissions decisions")
+    plot!(pl, res.μ_gap, label="number of changed assignments")
 
     colors = theme_palette(:auto)
-    pr = plot(reduce(hcat, D)', c = [colors[i] for i in 1:length(E.q)]', lw=2, xlabel="iteration", ylabel="demand", legend=false)
-    for (i, q) in enumerate(E.q)
-        hline!(pr, [q], c = colors[i], ls=:dash)
+
+    pr = plot(xlabel="iteration", ylabel="demand", legend=false)
+        
+    plot!(pr, reduce(hcat, res.D)',
+          c = [colors[i] for i in 1:length(res.E.q)]',
+          lw=2)
+    for (i, q) in enumerate(res.E.q)
+        hline!(pr, [q],
+               c = colors[i],
+               ls=:dash)
     end
 
     return pl, pr
 end
 
-pl, pr = plots()
+pl, pr = plots(res)
+display(pl)
 
 # savefig(pl, "./discreteplots/convergence.pdf")
 # savefig(pr, "./discreteplots/demand.pdf")
