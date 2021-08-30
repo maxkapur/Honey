@@ -85,7 +85,7 @@ end
 Compute each school's optimal admissions policy under the
 assumption that other schools' admissions policies are unchanged.
 """
-function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
+function bestresponse(E::Economy, X::Matrix{Float64}; verbose=false::Bool)::Matrix{Float64}
     (n, m) = size(E.Y)
 
     omX = 1 .- X
@@ -108,12 +108,15 @@ function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
     res_μ = zeros(Float64, n)
 
     for c in 1:m
-        # println("  c = $c")
+        verbose && println("  c = $c")
         model = Model(Ipopt.Optimizer)
         set_silent(model)
 
         # Demand vector
         @variable model (0 ≤ μ_c[1:n])
+        for s in 1:n
+            set_start_value(μ_c[s], X_BR[s, c] * freedemand[s, c])
+        end
 
         for s in 1:n
             # The most demand we can get from students of type s
@@ -128,20 +131,32 @@ function bestresponse(E::Economy, X::Matrix{Float64})::Matrix{Float64}
                               sum(E.W[i, j, c] * E.p[i] * μ_c[i] * E.p[j] * μ_c[j] for i in 1:n, j in 1:i))
 
         optimize!(model)
+        if verbose
+            print("    ")
+            @show termination_status(model)
+            print("    ")
+            @show primal_status(model)
+        end
 
         # If the optimum here exceeded the capacity, try again
         # with a capacity constraint and see if it does better
         # The same can be accomplished with a binary variable
         if E.p' * value.(μ_c) > E.q[c]
-            # println("    Opt exceeded capacity")
+            verbose && println("      Opt exceeded capacity; trying constraint")
             res_μ[:], stash_obj = value.(μ_c), getobjectivevalue(model) - E.r[c]
-            @constraint model (E.p' * value.(μ_c) ≤ E.q[c])
+            @constraint model (E.p' * μ_c ≤ E.q[c])
             optimize!(model)
+            if verbose
+                print("      ")
+                @show termination_status(model)
+                print("      ")
+                @show primal_status(model)
+            end
             if getobjectivevalue(model) > stash_obj
-                # println("    Found a better soln")
+                verbose && println("      Found a better soln")
                 res_μ[:] = value.(μ_c)
             else
-                # println("    But it was still optimal")
+                verbose && println("      But it was still optimal")
             end
         else 
             res_μ[:] = value.(μ_c)
@@ -172,7 +187,7 @@ Returns the random economy `E`, the admissions policy `X`, the `gap` or
 number of students whose assignments switched between iterations,
 and the demand vector `D` for each school at each iteration.
 """
-function experiment(T=10::Int, n=10::Int, m=8::Int)::NamedTuple
+function experiment(T=40::Int, n=120::Int, m=8::Int)::NamedTuple
     E = makedata(n, m)
 
     X = rand(Float64, size(E.Y))
@@ -189,12 +204,12 @@ function experiment(T=10::Int, n=10::Int, m=8::Int)::NamedTuple
     for t in 1:T
         @show t
 
-        X_BR[:] = bestresponse(E, X)
+        X_BR[:] = bestresponse(E, X; verbose=false)
         μ_BR[:] = assignment(E, X_BR)
 
         # Scale this norm by E.p
-        push!(X_gap, sum(abs.((X_BR - X)' * E.p)))
-        push!(μ_gap, sum(abs.((μ_BR - μ)' * E.p)))
+        push!(X_gap, sum(abs.((X_BR - X) .* E.p)))
+        push!(μ_gap, sum(abs.((μ_BR - μ) .* E.p)))
 
         push!(D, μ_BR' * E.p)
         X[:] = X_BR
@@ -209,20 +224,20 @@ end
 
 
 function plots(res)
-    pl = plot(xlabel="iteration", yscale=:log10, legend=:bottomleft)
-    plot!(pl, res.X_gap, label="number of changed admissions decisions")
-    plot!(pl, res.μ_gap, label="number of changed assignments")
+    pl = plot(xlabel="iteration", yscale=:log10, legend=:topright)
+    plot!(pl, max.(eps(), res.X_gap), label="number of changed admissions decisions")
+    plot!(pl, max.(eps(), res.μ_gap), label="number of changed assignments")
 
     colors = theme_palette(:auto)
 
     pr = plot(xlabel="iteration", ylabel="demand", legend=false, yscale=:log10)
         
-    plot!(pr, reduce(hcat, res.D)',
-          c = [colors[i] for i in 1:length(res.E.q)]',
+    plot!(pr, max.(eps(), reduce(hcat, res.D)'),
+          c=[colors[i] for i in 1:length(res.E.q)]',
           lw=2)
     for (i, q) in enumerate(res.E.q)
         hline!(pr, [q],
-               c = colors[i],
+               c=colors[i],
                ls=:dash)
     end
 
